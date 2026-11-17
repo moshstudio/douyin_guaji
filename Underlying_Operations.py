@@ -158,6 +158,40 @@ class underlying_operations:
             cut_pic_path = path_target + '/' + name + '.png'
         pic.crop((left_up[0], left_up[1], right_down[0], right_down[1])).save(cut_pic_path)
 
+    def find_text_center(self, keywords, x0=0, y0=0, x1=None, y1=None):
+        """在当前截图里查找关键词，返回最靠下的那处文字中心（实际像素坐标）"""
+        path = os.path.dirname(__file__) + '/pic/screenshot.png'
+        img = Image.open(path).convert('RGB')
+        width, height = img.size
+        if x1 is None:
+            x1 = width
+        if y1 is None:
+            y1 = height
+        x0 = max(0, min(int(x0), width - 1))
+        y0 = max(0, min(int(y0), height - 1))
+        x1 = max(x0 + 1, min(int(x1), width))
+        y1 = max(y0 + 1, min(int(y1), height))
+        crop = img.crop((x0, y0, x1, y1))
+        result = self.ocr.ocr(np.array(crop))
+        if not result or result == [None] or not result[0]:
+            return None
+        best = None
+        for item in result[0]:
+            text = item[1][0]
+            if not any(keyword in text for keyword in keywords):
+                continue
+            box = item[0]
+            cx = int(sum(point[0] for point in box) / 4) + x0
+            cy = int(sum(point[1] for point in box) / 4) + y0
+            box_width = max(point[0] for point in box) - min(point[0] for point in box)
+            # 优先更靠下、更宽的按钮，避开详情里的小字说明
+            score = (cy, box_width)
+            if best is None or score > best[0]:
+                best = (score, text, cx, cy)
+        if best is None:
+            return None
+        return best[1], best[2], best[3]
+
     def analyse_pic_word(self, picname='', change_color=0):
         """识别图像中的文字, change_color=1或2为不同的二值化模式，其他不做处理"""
         path = os.path.dirname(__file__) + '/pic'
@@ -201,12 +235,19 @@ class underlying_operations:
     def check_countdown(self, last_time=''):
         """对倒计时时间进行转化，变成秒存储"""
         try:
-            last_time = ''.join([char for char in last_time if char.isdigit()])
-            if len(last_time) == 4:
-                # minutes, seconds = map(int, last_time.split(':'))
-                minutes = int(last_time[:2])
-                seconds = int(last_time[2:])
+            matched = re.search(r'(\d{1,2})\s*[:：]\s*(\d{2})', last_time or '')
+            if matched:
+                minutes = int(matched.group(1))
+                seconds = int(matched.group(2))
             else:
+                digits = ''.join(char for char in (last_time or '') if char.isdigit())
+                if len(digits) >= 4:
+                    minutes = int(digits[:2])
+                    seconds = int(digits[2:4])
+                else:
+                    print("时间格式异常")
+                    return False
+            if seconds >= 60 or minutes > 99:
                 print("时间格式异常")
                 return False
             # 转换为总秒数
